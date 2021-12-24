@@ -14,14 +14,12 @@ from torchvision.transforms import transforms
 from .dataloader_functions import files_preprocessing, get_data_analyse, data_preparing, create_dataframe_from_scalefile, \
     find_max_content, create_dataframe_from_path
 
-
 class ThresholdTransform(object):
     def __init__(self, thr_255):
         self.thr = thr_255 / 255.  # input threshold for [0..255] gray level, convert to [0..1]
 
     def __call__(self, x):
         return (x > self.thr).to(x.dtype)  # do not change the data type
-
 
 class CustomPictDataset(Dataset):
     ''' Custom class dataset for Calgary-Campinas Public Brain MR Dataset
@@ -39,8 +37,7 @@ class CustomPictDataset(Dataset):
 
     def __init__(self, dataset_path, domain_mask, path_to_csv, mask_tail='_ss', save_dir='',
                  load_dir='', transform=transforms.Compose([transforms.Resize([int(256), int(256)]),
-                                                            transforms.PILToTensor(),
-                                                            ThresholdTransform(thr_255=240)])):
+                                                            transforms.PILToTensor()])):
         """
         For first launch
 
@@ -164,25 +161,26 @@ class CustomPictDataset(Dataset):
             pict, mask = self.data.iloc[idx]
             brain = self.transform(Image.open(pict).convert('L'))
             mask = self.transform(Image.open(mask).convert('L'))
-            mask = (mask > 0).float()
-            return {'image': brain, 'mask': mask}
+            tr = ThresholdTransform(thr_255=240)
+            brain = brain.float() / brain.max()
+            mask = tr(mask)
+            return {'image': brain, 'mask': mask} ## TODO make dict
         else:
             print('You forget to choose current domain')
 
 
 if __name__ == '__main__':
     dataset_path = ('Dataset/Original', 'Dataset/Mask')
-    domain_mask = ['philips_15', 'philips_3', 'siemens_15']
+    domain_mask = ['philips_15', 'philips_3', 'siemens_3']
     path_to_csv = './meta.csv'
     TD = CustomPictDataset(None, None, None, load_dir='Back')
     print(TD.df)
-    TD.domain_preproc('./siemens_3', 'siemens_3')
+    TD.domain_preproc('./philips3', 'philips_3')
     DL_DS = DataLoader(TD, batch_size=2, shuffle=False, drop_last=True)
     print(TD.data)
 
-    pos = 0
-    for (idx, batch) in enumerate(DL_DS):  # Print the 'text' data of the batch
-        if idx == 0:
-            image, mask = batch['image'], batch['mask']
-            print(image)
-            print(mask)
+    #pos = 0
+    #for (idx, batch) in enumerate(DL_DS):  # Print the 'text' data of the batch
+    #    if idx == 0:
+    #        print(type(batch[0]))
+    #        print(batch[2])

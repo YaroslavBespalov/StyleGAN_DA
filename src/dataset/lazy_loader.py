@@ -105,6 +105,6 @@ class LazyLoader:
     @staticmethod
     def domain_adaptation_siemens3() -> DALoader:
         if not LazyLoader.domain_adaptation_siemens3_save:
-            LazyLoader.domain_adaptation_siemens3_save = DALoader(path="siemens_3")
+            LazyLoader.domain_adaptation_siemens3_save = DALoader(path="siemens3")
         return LazyLoader.domain_adaptation_siemens3_save
 
