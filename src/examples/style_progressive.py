@@ -34,7 +34,8 @@ class StyleTransform(nn.Module):
             self.style_transform_2
         ).cuda()
 
-    def forward(self, styles: List[Tensor]):
+    def forward(self, styles: Tensor):
+        styles = [styles[:, i, ...] for i in range(styles.shape[1])]
         return torch.stack(tensors=self.style_transform(styles), dim=1)
 
 
