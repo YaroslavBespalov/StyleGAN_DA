@@ -52,15 +52,15 @@ args = parser.parse_args()
 for k in vars(args):
     print(f"{k}: {vars(args)[k]}")
 
-starting_model_number = 200000
+starting_model_number = 20000
 
 device = torch.device(f"cuda:{args.cuda}" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 
-writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_DA{int(time.time())}")
+writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_DA_Celeba{int(time.time())}")
 
 weights = torch.load(
-    f'{Paths.default.models()}/StyleGAN_DA_{str(starting_model_number).zfill(6)}.pt',
+    f'{Paths.default.models()}/StyleGAN_DA_Celeba_{str(starting_model_number).zfill(6)}.pt',
     map_location="cpu"
 )
 
@@ -70,23 +70,23 @@ image_generator = Generator(FromStyleConditionalGenerator(256, 512)).cuda()
 decoder = Decoder(image_generator).cuda()
 decoder.load_state_dict(weights['dec'])
 
-style_enc = GradualStyleEncoder(50, 1, mode="ir", style_count=14).cuda()
+style_enc = GradualStyleEncoder(50, 3, mode="ir", style_count=14).cuda()
 style_enc.load_state_dict(weights['enc'])
 
 
 style_transform = StyleTransform().cuda()
-# style_transform.load_state_dict(weights['st_trfm'])
+style_transform.load_state_dict(weights['st_trfm'])
 
 style_disc = StyleDisc().cuda()
-# style_disc.load_state_dict(weights['st_disc'])
+style_disc.load_state_dict(weights['st_disc'])
 
 gan_model = StyleGanModel(style_transform, StyleGANLoss(style_disc), (0.001, 0.0015))
 
-loader = jointed_loader(LazyLoader.domain_adaptation_ge3().loader_train_inf, #LazyLoader.domain_adaptation_philips15().loader_train_inf,
-                        LazyLoader.domain_adaptation_siemens3().loader_train_inf)
+loader = jointed_loader(LazyLoader.celeba().loader, #[8,3,256,256]
+                        LazyLoader.metfaces().loader)
 
 rec_loss = PSPLoss(id_lambda=0).cuda()
-style_opt = Adam(style_enc.parameters(), lr=2e-5)
+style_opt = Adam(style_enc.parameters(), lr=5e-5)
 gen_opt = Adam(image_generator.parameters(), lr=0.005)
 
 dec_pen = DecoderPenalty(10)
@@ -99,7 +99,7 @@ for i in range(100001):
     enc_pen.weight = coefs["penalty_coef"]
 
     batch = next(loader)
-    image = batch['image'].to(device)
+    image = batch.to(device)
     latent = style_enc(image)
 
     # res = StyleTransform().forward([latent[:, k] for k in range(latent.shape[1])])
@@ -111,6 +111,14 @@ for i in range(100001):
     )  # восстановление изображения по стилю
     loss.minimize_step(style_opt, gen_opt)
 
+    # latent = latent.detach()
+    # latent_eps = latent + torch.randn_like(latent) * latent.var().sqrt() * 0.1
+    # reconstructed_eps = decoder.forward([latent_eps[:, k] for k in range(latent_eps.shape[1])])
+    # latent_rec = style_enc(reconstructed_eps)
+
+    # style_l1: Loss = Loss(nn.L1Loss()(latent_rec, latent_eps))
+    # style_l1.minimize_step(style_opt, gen_opt)
+
     if i % 10 == 0:
         latent = style_enc(image).detach()
         latent.requires_grad_(True)
@@ -121,9 +129,9 @@ for i in range(100001):
         latent = style_enc(image)
         enc_pen(latent, [image]).minimize_step(style_opt)
 
-    batch_x = next(LazyLoader.domain_adaptation_ge3().loader_train_inf) #domain_adaptation_philips15
-    batch_y = next(LazyLoader.domain_adaptation_siemens3().loader_train_inf)
-    image_x, image_y = batch_x['image'].to(device), batch_y['image'].to(device)
+    batch_x = next(LazyLoader.celeba().loader) #domain_adaptation_philips15
+    batch_y = next(LazyLoader.metfaces().loader)
+    image_x, image_y = batch_x.to(device), batch_y.to(device)
     latent_x, latent_y = style_enc(image_x).detach(), style_enc(image_y).detach()
 
     fake_style = style_transform(latent_x)
@@ -136,8 +144,10 @@ for i in range(100001):
      ).minimize_step(gan_model.optimizer.opt_min)
 
 
+
     if i % 10 == 0:
         print(loss.item())
+        # writer.add_scalar("Styles_L1_Loss", style_l1.item(), i)
         writer.add_scalar("PSP_Loss", loss.item(), i)
         l1_dict = {f"style_{k}": nn.L1Loss()(fake_style[:, k], latent_x[:, k]) for k in range(14)}
         for k, v in l1_dict.items():
@@ -165,7 +175,7 @@ for i in range(100001):
                 'st_disc': style_disc.state_dict(),
                 'st_trfm': style_transform.state_dict()
             },
-            f'{Paths.default.models()}/StyleGAN_DA_ge3_{str(i + starting_model_number).zfill(6)}.pt',
+            f'{Paths.default.models()}/StyleGAN_DA_Celeba_{str(i + starting_model_number).zfill(6)}.pt',
         )
 
     # if i == 20001:

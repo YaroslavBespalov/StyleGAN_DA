@@ -1,0 +1,5 @@
+{
+  "L1_coef": 10,
+  "penalty_coef": 10,
+  "L1_autoenc": 3
+}
