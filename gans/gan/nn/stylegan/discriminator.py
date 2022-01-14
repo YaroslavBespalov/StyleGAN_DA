@@ -71,6 +71,14 @@ class Discriminator(D):
         return out
 
 
+class CondBinaryDiscriminator(Discriminator):
+    def __init__(self,):
+        super().__init__()
+
+    def forward(self, input: Tensor, cond: Tensor):
+        
+
+
 class ConditionalDiscriminator(D):
     def __init__(self, size, heatmap_channels: int, channel_multiplier=1, blur_kernel=[1, 3, 3, 1], cond_mult=1.0):
         super().__init__()

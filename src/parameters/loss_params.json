@@ -1,5 +1,6 @@
 {
-  "L1_coef": 10,
-  "penalty_coef": 10,
+  "L1_coef": 30,
+  "penalty_coef": 20,
+  "image_gan_loss": 0.1,
   "L1_autoenc": 3
 }

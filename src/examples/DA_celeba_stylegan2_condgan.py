@@ -17,7 +17,7 @@ from examples.autoencoder_penalty import DecoderPenalty, EncoderPenalty
 from optim.accumulator import Accumulator
 from gan.loss.stylegan import StyleGANLoss
 from gan.models.stylegan import StyleGanModel
-from examples.style_progressive import StyleDisc, StyleTransform
+from examples.style_progressive import StyleDisc, StyleTransform, Noise2Style
 from gan.loss.loss_base import Loss
 from gan.loss.perceptual.psp import PSPLoss
 from gan.nn.stylegan.generator import Decoder, Generator, FromStyleConditionalGenerator
@@ -70,12 +70,7 @@ weights = torch.load(
 image_generator = Generator(FromStyleConditionalGenerator(256, 512)).cuda()
 image_disc = Discriminator(256).cuda()
 
-decoder = Decoder(image_generator).cuda()
-decoder.load_state_dict(weights['dec'])
-
-style_enc = GradualStyleEncoder(50, 3, mode="ir", style_count=14).cuda()
-style_enc.load_state_dict(weights['enc'])
-
+noise_to_style = Noise2Style()
 
 style_transform = StyleTransform().cuda()
 style_transform.load_state_dict(weights['st_trfm'])

@@ -64,7 +64,6 @@ weights = torch.load(
     map_location="cpu"
 )
 
-
 image_generator = Generator(FromStyleConditionalGenerator(256, 512)).cuda()
 
 decoder = Decoder(image_generator).cuda()
