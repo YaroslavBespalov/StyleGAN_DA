@@ -18,6 +18,7 @@ from dataset.lazy_loader import LazyLoader
 # print(f'{image.min()}: image.min, {image.max()}: image.max,  {torch.unique(mask)}: mask.unique')
 from examples.style_progressive import Noise2Style, ConditionalStyleTransform
 from gan.nn.stylegan.components import EqualLinear
+from gan.nn.stylegan.discriminator import CondBinaryDiscriminator
 from nn.progressiya.base import Progressive, ProgressiveWithoutState
 
 # batch = next(LazyLoader.celeba().loader)
@@ -30,6 +31,11 @@ from nn.progressiya.base import Progressive, ProgressiveWithoutState
 model = Noise2Style()
 image_generation = ConditionalStyleTransform()
 print (image_generation(model.forward(batch_size=8), cond=torch.zeros(8, dtype=torch.int64).cuda()).shape)
+# qwq = CondBinaryDiscriminator(size=256)
+print(CondBinaryDiscriminator(size=256).forward(input=image_generation(model.forward(batch_size=8),
+                                                                       cond=torch.zeros(8, dtype=torch.int64).cuda()),
+                                                cond=0).shape)
+
 #
 # batch = next(LazyLoader.domain_adaptation_siemens15().loader_train_inf)
 # image, mask = batch['image'], batch['mask']

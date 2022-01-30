@@ -16,12 +16,12 @@ from torch import Tensor, nn
 from examples.autoencoder_penalty import DecoderPenalty, EncoderPenalty
 from optim.accumulator import Accumulator
 from gan.loss.stylegan import StyleGANLoss
-from gan.models.stylegan import StyleGanModel
-from examples.style_progressive import StyleDisc, StyleTransform, Noise2Style
+from gan.models.stylegan import StyleGanModel, CondStyleGanModel
+from examples.style_progressive import StyleDisc, StyleTransform, Noise2Style, ConditionalStyleTransform
 from gan.loss.loss_base import Loss
 from gan.loss.perceptual.psp import PSPLoss
 from gan.nn.stylegan.generator import Decoder, Generator, FromStyleConditionalGenerator
-from gan.nn.stylegan.discriminator import Discriminator
+from gan.nn.stylegan.discriminator import Discriminator, CondBinaryDiscriminator
 from gan.nn.stylegan.style_encoder import GradualStyleEncoder
 from parameters.run import RuntimeParameters
 
@@ -34,8 +34,8 @@ from parameters.path import Paths
 
 def jointed_loader(loader1, loader2):
     while True:
-        yield next(loader1)
-        yield next(loader2)
+        yield 0, next(loader1)
+        yield 1, next(loader2)
 
 def send_images_to_tensorboard(writer, data: Tensor, name: str, iter: int, count=8, normalize=True, range=(-1, 1)):
     with torch.no_grad():
@@ -54,111 +54,78 @@ args = parser.parse_args()
 for k in vars(args):
     print(f"{k}: {vars(args)[k]}")
 
-starting_model_number = 200000
+starting_model_number = 100000
 
 device = torch.device(f"cuda:{args.cuda}" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 
-writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_DA_Celeba{int(time.time())}")
-
+writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_COND_DA_Celeba_{int(time.time())}")
+#
 weights = torch.load(
-    f'{Paths.default.models()}/StyleGAN_DA_Celeba_{str(starting_model_number).zfill(6)}.pt',
+    f'{Paths.default.models()}/StyleGAN_COND_DA_Celeba_{str(starting_model_number).zfill(6)}.pt',
     map_location="cpu"
 )
+#{str(starting_model_number).zfill(6)}.pt',
+# e -> s,cond -> s -> I -> D(I, cond)
+# s, cond -> s -> (8, 14, 512)
 
 
 image_generator = Generator(FromStyleConditionalGenerator(256, 512)).cuda()
-image_disc = Discriminator(256).cuda()
+decoder = Decoder(image_generator).cuda()
+decoder.load_state_dict(weights["dec"])
 
-noise_to_style = Noise2Style()
+noise_to_style = Noise2Style().cuda()
+noise_to_style.load_state_dict(weights["n2s"])
 
-style_transform = StyleTransform().cuda()
-style_transform.load_state_dict(weights['st_trfm'])
+style_transform = ConditionalStyleTransform().cuda()
+style_transform.load_state_dict(weights["st_trfm"])
 
-style_disc = StyleDisc().cuda()
-style_disc.load_state_dict(weights['st_disc'])
+image_disc = CondBinaryDiscriminator(size=256).cuda()
+image_disc.load_state_dict(weights["image_disc"])
 
-gan_model = StyleGanModel(style_transform, StyleGANLoss(style_disc), (0.001, 0.0015))
-image_gan_model = StyleGanModel(decoder, StyleGANLoss(image_disc), (0.001/2, 0.0015/2))
+gan_model = CondStyleGanModel(decoder, StyleGANLoss(image_disc), (0.001/2, 0.0015/2))
 
 loader = jointed_loader(LazyLoader.celeba().loader, #[8,3,256,256]
                         LazyLoader.metfaces().loader)
 
-rec_loss = PSPLoss(id_lambda=0).cuda()
-style_opt = Adam(style_enc.parameters(), lr=5e-5)
-gen_opt = Adam(image_generator.parameters(), lr=0.005)
-
-dec_pen = DecoderPenalty(10)
-enc_pen = EncoderPenalty(10)
 
 gan_accumulator = Accumulator(gan_model.generator, decay=0.99, write_every=100)
-image_gan_accumulator = Accumulator(image_gan_model.generator, decay=0.99, write_every=100)
 
-for i in range(100001):
+noise_to_style_opt = Adam(noise_to_style.parameters(), lr=0.001/2)
+style_transform_opt = Adam(style_transform.parameters(), lr=0.001/2)
+
+for i in range(200001):
 
     coefs = json.load(open(os.path.join(sys.path[0], "../parameters/loss_params.json")))
-    dec_pen.weight = coefs["penalty_coef"]
-    enc_pen.weight = coefs["penalty_coef"]
 
-    batch = next(loader)
-    image = batch.to(device)
-    latent = style_enc(image)
+    cond, batch = next(loader)
+    cond = torch.ones(8, dtype=torch.int32).cuda() * cond
+    real_image = batch.to(device)
 
-    # res = StyleTransform().forward([latent[:, k] for k in range(latent.shape[1])])
+    B = real_image.shape[0]
+    s0 = noise_to_style(B)
 
-    reconstructed = decoder.forward([latent[:, k] for k in range(latent.shape[1])])
+    s1 = style_transform(s0, cond)
+    s2 = style_transform(s0, 1 - cond)
+    fake_image = decoder([s1[:, k] for k in range(s1.shape[1])])
+
+    fcond = cond.type(torch.float32)
+    gan_model.discriminator_train([real_image], [fake_image.detach()], [fcond])
 
     loss: Loss = Loss(
-        rec_loss(image, image, reconstructed, latent).to_tensor() + nn.L1Loss()(reconstructed, image) * coefs["L1_autoenc"]
+        gan_model.generator_loss([real_image], [fake_image], [fcond]).to_tensor() +
+        nn.L1Loss()(s1, s2) * coefs["L1_coef"]
     )  # восстановление изображения по стилю
-    loss.minimize_step(style_opt, gen_opt)
-
-    # latent = latent.detach()
-    # latent_eps = latent + torch.randn_like(latent) * latent.var().sqrt() * 0.1
-    # reconstructed_eps = decoder.forward([latent_eps[:, k] for k in range(latent_eps.shape[1])])
-    # latent_rec = style_enc(reconstructed_eps)
-
-    # style_l1: Loss = Loss(nn.L1Loss()(latent_rec, latent_eps))
-    # style_l1.minimize_step(style_opt, gen_opt)
+    loss.minimize_step(gan_model.optimizer.opt_min, style_transform_opt, noise_to_style_opt)
 
     gan_accumulator.step(i)
-    image_gan_accumulator.step(i)
-
-    if i % 10 == 0:
-        latent = style_enc(image).detach()
-        latent.requires_grad_(True)
-        reconstructed = decoder.forward([latent[:, k] for k in range(latent.shape[1])])
-        dec_pen(reconstructed, [latent]).minimize_step(gen_opt)
-
-        image.requires_grad_(True)
-        latent = style_enc(image)
-        enc_pen(latent, [image]).minimize_step(style_opt)
-
-    batch_x = next(LazyLoader.celeba().loader) #domain_adaptation_philips15
-    batch_y = next(LazyLoader.metfaces().loader)
-    image_x, image_y = batch_x.to(device), batch_y.to(device)
-    latent_x, latent_y = style_enc(image_x).detach(), style_enc(image_y).detach()
-
-    fake_style = style_transform(latent_x)
-    real_style = latent_y
-    fake_image = decoder.forward([fake_style[:, k] for k in range(fake_style.shape[1])])
-
-    gan_model.discriminator_train([real_style], [fake_style.detach()])
-    image_gan_model.discriminator_train([image_y], [fake_image.detach()])
-
-    Loss(
-        gan_model.generator_loss([real_style], [fake_style]).to_tensor() +
-        image_gan_model.generator_loss([image_y], [fake_image]).to_tensor() * coefs["image_gan_loss"] +
-        nn.L1Loss()(fake_style,  latent_x) * coefs["L1_coef"]
-     ).minimize_step(gan_model.optimizer.opt_min, image_gan_model.optimizer.opt_min)
-
 
 
     if i % 10 == 0:
         print(loss.item())
         # writer.add_scalar("Styles_L1_Loss", style_l1.item(), i)
-        writer.add_scalar("PSP_Loss", loss.item(), i)
-        l1_dict = {f"style_{k}": nn.L1Loss()(fake_style[:, k], latent_x[:, k]) for k in range(14)}
+        writer.add_scalar("Loss", loss.item(), i)
+        l1_dict = {f"style_{k}": nn.L1Loss()(s1[:, k], s2[:, k]) for k in range(14)}
         for k, v in l1_dict.items():
             writer.add_scalar(f'styles/{k}', v, i)
 
@@ -166,26 +133,23 @@ for i in range(100001):
         print(i)
         with torch.no_grad():
 
-            reconstructed = decoder.forward([latent_y[:, k] for k in range(latent_y.shape[1])])
-            send_images_to_tensorboard(writer, reconstructed, "Y REC", i)
+            fake_image = decoder([s1[:, k] for k in range(s1.shape[1])])
+            send_images_to_tensorboard(writer, fake_image, "FAKE 1", i)
+            fake_image = decoder([s2[:, k] for k in range(s2.shape[1])])
+            send_images_to_tensorboard(writer, fake_image, "FAKE 2", i)
 
-            send_images_to_tensorboard(writer, image_x, "X", i)
+            send_images_to_tensorboard(writer, real_image, "REAL", i)
 
-            send_images_to_tensorboard(writer, image_y, "Y", i)
 
-            fake_image = decoder.forward([fake_style[:, k] for k in range(fake_style.shape[1])])
-            send_images_to_tensorboard(writer, fake_image, "X -> Y", i)
-
-    if i % 20000 == 0 and i > 0:
+    if i % 30000 == 0 and i > 0:
         torch.save(
             {
+                'n2s': noise_to_style.state_dict(),
                 'dec': decoder.state_dict(),
-                'enc': style_enc.state_dict(),
-                'st_disc': style_disc.state_dict(),
                 'st_trfm': style_transform.state_dict(),
                 'image_disc': image_disc.state_dict()
             },
-            f'{Paths.default.models()}/StyleGAN_DA_Celeba_{str(i + starting_model_number).zfill(6)}.pt',
+            f'{Paths.default.models()}/StyleGAN_COND_DA_Celeba_{str(i + starting_model_number).zfill(6)}.pt',
         )
 
     # if i == 20001:

@@ -72,11 +72,16 @@ class Discriminator(D):
 
 
 class CondBinaryDiscriminator(Discriminator):
-    def __init__(self,):
-        super().__init__()
+    def __init__(self, size, input_nc=4):
+        super().__init__(size=size, input_nc=input_nc)
+        self.size = size
+        self.input_nc = input_nc
 
     def forward(self, input: Tensor, cond: Tensor):
-        
+        B = input.shape[0]
+        cond_matrix = cond.view(B, 1, 1, 1) * torch.ones_like(input[:, 0, ...]).unsqueeze(dim=1) # (B, C, 512, 512)
+        input = torch.cat((input, cond_matrix), dim=1)
+        return super().forward(input)
 
 
 class ConditionalDiscriminator(D):
