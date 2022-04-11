@@ -64,9 +64,9 @@ class GradualStyleBlock(nn.Module):
 
 
 class GradualStyleEncoder(nn.Module):
-    def __init__(self, num_layers, input_nc, mode='ir', style_count = 18):
+    def __init__(self, num_layers, input_nc, mode='ir', style_count = 18, style_multiplayer=1):
         super(GradualStyleEncoder, self).__init__()
-        assert num_layers in [50, 100, 152], 'num_layers should be 50,100, or 152'
+        assert num_layers in [25, 50, 100, 152], 'num_layers should be 50,100, or 152'
         assert mode in ['ir', 'ir_se'], 'mode should be ir or ir_se'
         blocks = make_res_blocks(num_layers)
 
@@ -87,9 +87,9 @@ class GradualStyleEncoder(nn.Module):
         self.body = nn.Sequential(*modules)
 
         self.styles = nn.ModuleList()
-        self.style_count = style_count
-        self.coarse_ind = 3
-        self.middle_ind = 7
+        self.style_count = style_count * style_multiplayer
+        self.coarse_ind = 3 * style_multiplayer
+        self.middle_ind = 7 * style_multiplayer
 
         spatial_num = [16] * self.coarse_ind + \
                       [32] * (self.middle_ind - self.coarse_ind) + \

@@ -59,12 +59,14 @@ class FromStyleConditionalGenerator(CG):
         size,
         style_dim,
         channel_multiplier=1,
-        blur_kernel=[1, 3, 3, 1]
+        blur_kernel=[1, 3, 3, 1],
+        style_multiplayer=1
     ):
         super().__init__()
 
         self.size = size
         self.style_dim = style_dim
+        self.style_multiplayer = style_multiplayer
 
         self.channels = {
             4: 512,
@@ -102,12 +104,13 @@ class FromStyleConditionalGenerator(CG):
                 )
             )
 
-            convs.append(
-                StyledConv(
-                    ModulatedConv2d(out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel),
-                    ConditionInjection(out_channel)
+            for _ in range((style_multiplayer - 1) * 2 + 1):
+                convs.append(
+                    StyledConv(
+                        ModulatedConv2d(out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel),
+                        ConditionInjection(out_channel)
+                    )
                 )
-            )
 
             to_rgbs.append(ToRGB(out_channel, style_dim))
 
@@ -122,9 +125,10 @@ class FromStyleConditionalGenerator(CG):
             Progressive[List[Tensor]]([conv1] + convs, InjectByName("input")),
             ZapomniKak("input"),
             InputFilterName({'input', 'style'}),
-            InputFilterVertical(list(range(1, len(convs) + 2, 2))),
+            InputFilterVertical(list(range(1, len(convs) + 2 + (style_multiplayer - 1) * 2, 2 * style_multiplayer))),
             ProgressiveWithoutState[Tensor]([to_rgb1] + to_rgbs, InjectByName("skip"), LastElementCollector)
         )
+
 
     def forward(
         self,
@@ -132,7 +136,6 @@ class FromStyleConditionalGenerator(CG):
         styles: List[Tensor],
         condition: List[Tensor]
     ):
-
         image = self.progression.forward(init=init, noise=condition, style=styles)
         return image
 
@@ -144,21 +147,23 @@ class Generator(G):
         self.gen = gen
         self.z_to_style = NoiseToStyle(gen.style_dim,  n_mlp, lr_mlp, gen.n_latent)
         self.input = ConstantInput(gen.channels[4])
+        self.style_multiplayer = gen.style_multiplayer
 
-        for i in range(self.gen.n_latent + 1):
+        for i in range(self.gen.n_latent * self.style_multiplayer + 1):
             self.register_parameter(f"w_{i}", nn.Parameter(torch.zeros(1)))
 
     def make_noise(self, B, device):
 
         ws = [
-            getattr(self, f'w_{i}') for i in range(self.gen.n_latent + 1)
+            getattr(self, f'w_{i}') for i in range(self.gen.n_latent * self.style_multiplayer + 1)
         ]
 
         noise = [torch.randn(B, self.gen.channels[4], 4, 4, device=device)]
 
         for i in range(0, self.gen.n_latent // 2):
-            noise.append(torch.randn(B, self.gen.channels[2 ** (i + 3)], 8 * (2 ** i), 8 * (2 ** i), device=device))
-            noise.append(torch.randn(B, self.gen.channels[2 ** (i + 3)], 8 * (2 ** i), 8 * (2 ** i), device=device))
+            for j in range(self.style_multiplayer):
+                noise.append(torch.randn(B, self.gen.channels[2 ** (i + 3)], 8 * (2 ** i), 8 * (2 ** i), device=device))
+                noise.append(torch.randn(B, self.gen.channels[2 ** (i + 3)], 8 * (2 ** i), 8 * (2 ** i), device=device))
 
         return [n * w for n, w in zip(noise, ws)]
 
@@ -172,6 +177,40 @@ class Generator(G):
         latent = self.z_to_style.forward(z, inject_index)
         condition = self.make_noise(z[0].shape[0], z[0].device)
         image = self.gen(self.input(latent[0]), latent, condition)
+
+        res_latent = latent if return_latents else None
+
+        return image, res_latent
+
+
+class ImageToImage(nn.Module):
+
+    def __init__(self, gen: FromStyleConditionalGenerator, image_channels: int):
+        super().__init__()
+
+        self.gen: FromStyleConditionalGenerator = gen
+
+        # self.init_cov = ConvLayer(heatmap_channels, self.gen.channels[256], kernel_size=1)
+
+        self.noise = [
+            ConvLayer(image_channels, self.gen.channels[gen.size], kernel_size=1),
+            ConvLayer(self.gen.channels[gen.size], self.gen.channels[gen.size], 3, downsample=False),
+        ]
+        tmp_size = gen.size
+        while tmp_size > 4:
+            self.noise.append(
+                ConvLayer(self.gen.channels[tmp_size], self.gen.channels[tmp_size//2], 3, downsample=True)
+            )
+            tmp_size = tmp_size // 2
+
+        self.noise = Progressive(self.noise)
+
+    def forward(self, cond: Tensor, styles: List[Tensor], return_latents=False, inject_index=None):
+
+        latent = styles
+        condition = self.noise(cond)[-1:1:-1]
+        condition = list(itertools.chain(*zip(condition, condition)))[1:]
+        image = self.gen(condition[0], latent, condition)
 
         res_latent = latent if return_latents else None
 

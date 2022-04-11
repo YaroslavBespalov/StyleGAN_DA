@@ -14,7 +14,7 @@ from parameters.path import Paths
 
 from albumentations.pytorch.transforms import ToTensorV2 as AlbToTensor, ToTensorV2
 
-from dataset.DA_dataloader import ThresholdTransform, CustomPictDataset
+from dataset.DA_dataloader import CustomPictDataset
 
 
 def data_sampler(dataset, shuffle, distributed):
@@ -38,10 +38,10 @@ class AbstractLoader:
     pass
 
 
-dataset = CustomPictDataset(None, None, None, load_dir='/raid/data/DA_BrainDataset/Back')
-dataset.domain_preproc('/raid/data/DA_BrainDataset/philips_15', 'philips_15')
+# dataset = CustomPictDataset(None, None, None, load_dir='/raid/data/DA_BrainDataset/BackUp')
+# dataset.domain_preproc('/raid/data/DA_BrainDataset/old_data/philips_15', 'philips_15')
 
-DL_DS = DataLoader(dataset, batch_size=8, shuffle=False, drop_last=True)
+# DL_DS = DataLoader(dataset, batch_size=8, shuffle=False, drop_last=True)
 
 
 class DALoader(AbstractLoader):
@@ -54,7 +54,9 @@ class DALoader(AbstractLoader):
     #                                              ThresholdTransform(thr_255=240)])
 
     def __init__(self, path="philips_15"):
-        self.dataset = CustomPictDataset(None, None, None, load_dir='/raid/data/DA_BrainDataset/Back')
+        print("/raid/data/DA_BrainDataset/BackUp")
+        print(f'/raid/data/DA_BrainDataset/{path}', f'{path}')
+        self.dataset = CustomPictDataset(None, None, load_dir='/raid/data/DA_BrainDataset/BackUp')
         self.dataset.domain_preproc(f'/raid/data/DA_BrainDataset/{path}', f'{path}')
         N = self.dataset.__len__()
 
@@ -164,6 +166,8 @@ class LazyLoader:
     domain_adaptation_siemens15_save: Optional[DALoader] = None
     domain_adaptation_siemens3_save: Optional[DALoader] = None
     domain_adaptation_ge3_save: Optional[DALoader] = None
+    domain_adaptation_ge15_save: Optional[DALoader] = None
+    domain_adaptation_philips3_save: Optional[DALoader] = None
     celeba_save: Optional[Celeba] = None
     metfaces_save: Optional[Metfaces] = None
 
@@ -174,8 +178,14 @@ class LazyLoader:
     @staticmethod
     def domain_adaptation_philips15() -> DALoader:
         if not LazyLoader.domain_adaptation_philips15_save:
-            LazyLoader.domain_adaptation_philips15_save = DALoader(path="philips_15")
+            LazyLoader.domain_adaptation_philips15_save = DALoader(path="philips15")
         return LazyLoader.domain_adaptation_philips15_save
+
+    @staticmethod
+    def domain_adaptation_philips3() -> DALoader:
+        if not LazyLoader.domain_adaptation_philips3_save:
+            LazyLoader.domain_adaptation_philips3_save = DALoader(path="philips3")
+        return LazyLoader.domain_adaptation_philips3_save
 
     @staticmethod
     def domain_adaptation_siemens15() -> DALoader:
@@ -192,8 +202,14 @@ class LazyLoader:
     @staticmethod
     def domain_adaptation_ge3() -> DALoader:
         if not LazyLoader.domain_adaptation_ge3_save:
-            LazyLoader.domain_adaptation_ge3_save = DALoader(path="ge_3")
+            LazyLoader.domain_adaptation_ge3_save = DALoader(path="ge3")
         return LazyLoader.domain_adaptation_ge3_save
+
+    @staticmethod
+    def domain_adaptation_ge15() -> DALoader:
+        if not LazyLoader.domain_adaptation_ge15_save:
+            LazyLoader.domain_adaptation_ge15_save = DALoader(path="ge15")
+        return LazyLoader.domain_adaptation_ge15_save
 
     @staticmethod
     def celeba():

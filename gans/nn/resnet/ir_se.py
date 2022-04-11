@@ -11,7 +11,14 @@ def get_block(in_channel, depth, num_units, stride=2):
 
 
 def make_res_blocks(num_layers):
-	if num_layers == 50:
+	if num_layers == 25:
+		blocks = [
+			get_block(in_channel=64, depth=64, num_units=3),
+			get_block(in_channel=64, depth=128, num_units=5),
+			get_block(in_channel=128, depth=256, num_units=7),
+			get_block(in_channel=256, depth=512, num_units=3)
+		]
+	elif num_layers == 50:
 		blocks = [
 			get_block(in_channel=64, depth=64, num_units=3),
 			get_block(in_channel=64, depth=128, num_units=4),

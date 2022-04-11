@@ -4,8 +4,10 @@ import time
 import json
 
 sys.path.append(os.path.join(sys.path[0], '../'))
+sys.path.append(os.path.join(sys.path[0], '../../'))
 sys.path.append(os.path.join(sys.path[0], '../../gans/'))
 sys.path.append(os.path.join(sys.path[0], '../../src/'))
+sys.path.append(os.path.join(sys.path[0], '../../src/examples'))
 from itertools import chain
 
 from torch.optim.adam import Adam
@@ -13,18 +15,16 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import make_grid
 from torch import Tensor, nn
 
-from examples.autoencoder_penalty import DecoderPenalty, EncoderPenalty
+from autoencoder_penalty import DecoderPenalty, EncoderPenalty
 from gan.loss.stylegan import StyleGANLoss
 from gan.models.stylegan import StyleGanModel
-from examples.style_progressive import StyleDisc, StyleTransform
+from style_progressive import StyleDisc, StyleTransform
 from gan.loss.loss_base import Loss
 from gan.loss.perceptual.psp import PSPLoss
 from gan.nn.stylegan.generator import Decoder, Generator, FromStyleConditionalGenerator
 from gan.nn.stylegan.style_encoder import GradualStyleEncoder
 from parameters.run import RuntimeParameters
 
-sys.path.append(os.path.join(sys.path[0], '../'))
-sys.path.append(os.path.join(sys.path[0], '../../gans/'))
 import torch
 from dataset.lazy_loader import LazyLoader
 from parameters.path import Paths
@@ -52,25 +52,25 @@ args = parser.parse_args()
 for k in vars(args):
     print(f"{k}: {vars(args)[k]}")
 
-starting_model_number = 200000
+starting_model_number = 100000
 
 device = torch.device(f"cuda:{args.cuda}" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 
-writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_DA{int(time.time())}")
+writer = SummaryWriter(f"{Paths.default.board()}/StyleGAN_DA_ph15->ge15_{int(time.time())}")
 
-weights = torch.load(
-    f'{Paths.default.models()}/StyleGAN_DA_{str(starting_model_number).zfill(6)}.pt',
-    map_location="cpu"
-)
+# weights = torch.load(
+#     f'{Paths.default.models()}/StyleGAN_DA_sm15->ge3_{str(starting_model_number).zfill(6)}.pt',
+#     map_location="cpu"
+# )
 
-image_generator = Generator(FromStyleConditionalGenerator(256, 512)).cuda()
+image_generator = Generator(FromStyleConditionalGenerator(256, 512, style_multiplayer=1)).cuda()
 
 decoder = Decoder(image_generator).cuda()
-decoder.load_state_dict(weights['dec'])
+# decoder.load_state_dict(weights['dec'])
 
-style_enc = GradualStyleEncoder(50, 1, mode="ir", style_count=14).cuda()
-style_enc.load_state_dict(weights['enc'])
+style_enc = GradualStyleEncoder(50, 3, mode="ir", style_count=14, style_multiplayer=1).cuda()
+# style_enc.load_state_dict(weights['enc'])
 
 
 style_transform = StyleTransform().cuda()
@@ -81,8 +81,8 @@ style_disc = StyleDisc().cuda()
 
 gan_model = StyleGanModel(style_transform, StyleGANLoss(style_disc), (0.001, 0.0015))
 
-loader = jointed_loader(LazyLoader.domain_adaptation_ge3().loader_train_inf, #LazyLoader.domain_adaptation_philips15().loader_train_inf,
-                        LazyLoader.domain_adaptation_siemens3().loader_train_inf)
+loader = jointed_loader(LazyLoader.domain_adaptation_philips15().loader_train_inf, #LazyLoader.domain_adaptation_philips15().loader_train_inf,
+                        LazyLoader.domain_adaptation_ge15().loader_train_inf)
 
 rec_loss = PSPLoss(id_lambda=0).cuda()
 style_opt = Adam(style_enc.parameters(), lr=2e-5)
@@ -93,12 +93,12 @@ enc_pen = EncoderPenalty(10)
 
 for i in range(100001):
 
-    coefs = json.load(open(os.path.join(sys.path[0], "../parameters/loss_params.json")))
+    coefs = json.load(open(os.path.join(sys.path[0], "../parameters/loss_params_BRAIN_DA.json")))
     dec_pen.weight = coefs["penalty_coef"]
     enc_pen.weight = coefs["penalty_coef"]
 
     batch = next(loader)
-    image = batch['image'].to(device)
+    image = batch['image'].to(device).repeat(1, 3, 1, 1)
     latent = style_enc(image)
 
     # res = StyleTransform().forward([latent[:, k] for k in range(latent.shape[1])])
@@ -120,9 +120,9 @@ for i in range(100001):
         latent = style_enc(image)
         enc_pen(latent, [image]).minimize_step(style_opt)
 
-    batch_x = next(LazyLoader.domain_adaptation_ge3().loader_train_inf) #domain_adaptation_philips15
-    batch_y = next(LazyLoader.domain_adaptation_siemens3().loader_train_inf)
-    image_x, image_y = batch_x['image'].to(device), batch_y['image'].to(device)
+    batch_x = next(LazyLoader.domain_adaptation_philips15().loader_train_inf) #domain_adaptation_philips15
+    batch_y = next(LazyLoader.domain_adaptation_ge15().loader_train_inf)
+    image_x, image_y = batch_x['image'].to(device).repeat(1, 3, 1, 1), batch_y['image'].to(device).repeat(1, 3, 1, 1)
     latent_x, latent_y = style_enc(image_x).detach(), style_enc(image_y).detach()
 
     fake_style = style_transform(latent_x)
@@ -156,7 +156,8 @@ for i in range(100001):
             fake_image = decoder.forward([fake_style[:, k] for k in range(fake_style.shape[1])])
             send_images_to_tensorboard(writer, fake_image, "X -> Y", i)
 
-    if i % 20000 == 0 and i > 0:
+
+    if i % 25000 == 0 and i > 0:
         torch.save(
             {
                 'dec': decoder.state_dict(),
@@ -164,7 +165,7 @@ for i in range(100001):
                 'st_disc': style_disc.state_dict(),
                 'st_trfm': style_transform.state_dict()
             },
-            f'{Paths.default.models()}/StyleGAN_DA_ge3_{str(i + starting_model_number).zfill(6)}.pt',
+            f'{Paths.default.models()}/StyleGAN_DA_ph15->ge15_{str(i + starting_model_number).zfill(6)}.pt',
         )
 
     # if i == 20001:

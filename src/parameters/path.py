@@ -18,8 +18,8 @@ class PathProvider(ABC):
 
 class ZhoresPath(PathProvider):
 
-    homa = "/trinity/home/n.buzun"
-    ausland = "/gpfs/gpfs0/n.buzun"
+    homa = "/trinity/home/ibespalov"
+    ausland = "/gpfs/gpfs0/ibespalov"
 
     @staticmethod
     def board() -> str:
